@@ -1,0 +1,7 @@
+# Excel files contain company data - never commit them (this repo is public)
+*.xlsx
+*.xlsm
+*.xls
+input/
+output/
+__pycache__/
