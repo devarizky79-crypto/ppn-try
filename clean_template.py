@@ -9,7 +9,9 @@ What it does:
   2. Removes external workbook links that no kept formula or name uses.
   3. Removes defined names that are broken (#REF!), point to external files,
      belong to removed sheets, or are not used anywhere.
-  4. Deletes calcChain.xml (Excel rebuilds it on open) and any package parts
+  4. Removes tables' stored column formulas that point at removed links/sheets
+     (the formulas in the cells themselves are untouched).
+  5. Deletes calcChain.xml (Excel rebuilds it on open) and any package parts
      left orphaned by the steps above.
 
 The original file is never modified; a new file is written.
@@ -223,6 +225,33 @@ def clean(src: Path, dst: Path, keep_hidden: set[str]) -> dict:
     for p in dropped:
         del files[p]
 
+    # ---- tables keep their own copy of a calculated column's formula. Drop copies that
+    # point at removed external links or removed sheets/tables (the cells keep their formulas).
+    removed_tables = set()
+    for p in dropped:
+        if p.startswith("xl/tables/"):
+            m = re.search(rb'<table [^>]*\bname="([^"]+)"', zin.read(p))
+            if m:
+                removed_tables.add(m.group(1).decode())
+    stale_formulas = 0
+    for p in [p for p in files if p.startswith("xl/tables/") and p.endswith(".xml")]:
+        x = files[p].decode("utf-8")
+
+        def drop_stale(m):
+            nonlocal stale_formulas
+            f = html.unescape(m.group(1))
+            ext = removed_links and re.search(r"(?<![\[\w])\[\d+\](?=[^\]\[]*!)", f)
+            gone = any(sheet_ref_present(f, r) for r in removed_sheets) or any(
+                re.search(r"(?<!\w)" + re.escape(t) + r"\[", f) for t in removed_tables)
+            if ext or gone:
+                stale_formulas += 1
+                return ""
+            return m.group(0)
+        x2 = re.sub(r"<calculatedColumnFormula\b[^>]*>(.*?)</calculatedColumnFormula>", drop_stale, x, flags=re.S)
+        x2 = re.sub(r"<calculatedColumnFormula\b[^>]*/>", "", x2)
+        if x2 != x:
+            files[p] = x2.encode("utf-8")
+
     # ---- content types: drop overrides for deleted parts
     ct = files["[Content_Types].xml"].decode("utf-8")
     def keep_override(m):
@@ -247,6 +276,7 @@ def clean(src: Path, dst: Path, keep_hidden: set[str]) -> dict:
         "sheets_before": len(sheets), "sheets_after": len(kept), "removed_sheets": removed_sheets,
         "names_before": len(names), "names_after": len(final_names),
         "external_links_removed": removed_links, "parts_dropped": len(dropped),
+        "stale_table_formulas": stale_formulas,
         "size_before": src.stat().st_size, "size_after": dst.stat().st_size,
     }
 
@@ -267,6 +297,7 @@ def main(argv=None):
     print(f"  Defined names:   {r['names_before']} -> {r['names_after']}")
     print(f"  External links removed: {r['external_links_removed']}")
     print(f"  Orphan parts dropped:   {r['parts_dropped']}")
+    print(f"  Broken table column formulas removed: {r['stale_table_formulas']}")
     print(f"  File size: {r['size_before']/1e6:.2f} MB -> {r['size_after']/1e6:.2f} MB")
     print("  Removed sheets:")
     for s in r["removed_sheets"]:

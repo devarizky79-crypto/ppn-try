@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import posixpath
 import re
 import sys
 import warnings
@@ -281,6 +282,16 @@ def simplify(src: Path, dst: Path, cib_max: float | None = None) -> dict:
             sys.exit(f"Unexpected remaining reference to old tanda-1 cells in {sh}")
         files[p] = x.encode()
         replaced[sh] = (na, nb)
+        # tables on that sheet store a copy of the column formula: update it the same way
+        rel_p = posixpath.join(posixpath.dirname(p), "_rels", posixpath.basename(p) + ".rels")
+        if rel_p in files:
+            for tgt in re.findall(r'Target="([^"]+)"', files[rel_p].decode()):
+                tp = posixpath.normpath(posixpath.join(posixpath.dirname(p), tgt))
+                if tp.startswith("xl/tables/") and tp in files:
+                    t = files[tp].decode()
+                    t = t.replace(a, f"COUNTIFS(Setting!$V$9:$V$80,Setting!$R${r},Setting!$W$9:$W$80,")
+                    t = t.replace(b, ",Setting!$X$9:$X$80,")
+                    files[tp] = t.encode()
 
     # ---- Cek Kilang - Detail: column numbers now come from names
     dp = part["Cek Kilang - Detail"]
