@@ -26,3 +26,22 @@ python clean_template.py input/MyFile.xlsx --keep-hidden "BPP (Dec M+3),TPPI (Ok
 ```
 
 Excel files are git-ignored because this repository is public.
+
+## `simplify_setting.py`
+
+Run after `clean_template.py`. Simplifies the **Setting** sheet:
+
+- **Tanda 1**: instead of the wide K1..K6 Kelas/Volume pairs, two small tables:
+  `Sheet kilang | Kilang | Status` and one need per row `Sheet kilang | Kelas | Volume | Status`.
+  Status shows `✔ OK` or a plain-language warning (sheet not found, volume not a
+  column header, missing input, duplicate).
+- **Kilang table**: Tabel MM columns are chosen by name from a dropdown instead of typing column numbers.
+- Helper columns are hidden. The refinery sheets' tanda-1 formulas are repointed to the new list;
+  everything else is unchanged.
+
+```bash
+python clean_template.py input/MyFile.xlsx output/MyFile_CLEAN.xlsx
+python simplify_setting.py output/MyFile_CLEAN.xlsx output/MyFile_SIMPLE.xlsx
+```
+
+Needs `openpyxl` (`pip install openpyxl`).
