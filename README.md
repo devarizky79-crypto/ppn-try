@@ -41,7 +41,7 @@ Run after `clean_template.py`. Simplifies the **Setting** sheet:
 
 ```bash
 python clean_template.py input/MyFile.xlsx output/MyFile_CLEAN.xlsx
-python simplify_setting.py output/MyFile_CLEAN.xlsx output/MyFile_SIMPLE.xlsx
+python simplify_setting.py output/MyFile_CLEAN.xlsx output/MyFile_SIMPLE.xlsx --cib-max 600
 ```
 
 Needs `openpyxl` (`pip install openpyxl`).

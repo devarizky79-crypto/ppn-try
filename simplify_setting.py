@@ -75,7 +75,7 @@ def split_ref(ref):
 
 
 # ------------------------------------------------------------ main
-def simplify(src: Path, dst: Path) -> dict:
+def simplify(src: Path, dst: Path, cib_max: float | None = None) -> dict:
     wb = openpyxl.load_workbook(src)  # read-only use: values + expanded formulas
     names = wb.sheetnames
     for need in ("Setting", "Cek Kilang - Detail", "Impor - Rasio & Batasan", "Impor - Pour Point"):
@@ -142,6 +142,9 @@ def simplify(src: Path, dst: Path) -> dict:
 
     def put(ref, val, style):
         cells[ref] = (val, style)
+
+    if cib_max is not None:
+        put("B5", int(cib_max) if float(cib_max).is_integer() else cib_max, cells.get("B5", (None, S_INPUT))[1])
 
     # ---- intro + kilang table
     put("A2", "Cara pakai: isi hanya sel KUNING. Sel lain dihitung otomatis, jangan diubah. "
@@ -222,15 +225,21 @@ def simplify(src: Path, dst: Path) -> dict:
     cols = f"<cols>{cols}</cols>"
 
     dv = (
-        '<dataValidations count="6">'
+        '<dataValidations count="4">'
         '<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="S9:S24"><formula1>$A$9:$A$16</formula1></dataValidation>'
         '<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="V9:V80"><formula1>$R$9:$R$24</formula1></dataValidation>'
         '<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="W9:W80"><formula1>"H,L,M,SH"</formula1></dataValidation>'
         '<dataValidation type="decimal" operator="greaterThan" allowBlank="1" showErrorMessage="1" '
         'errorTitle="Volume" error="Isi angka volume (MB), sama dengan judul kolom di sheet kilang." sqref="X9:X80"><formula1>0</formula1></dataValidation>'
-        f'<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="B9:C16"><formula1>{x_attr(RASIO)}!$P$1:$X$1</formula1></dataValidation>'
-        f'<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="D9:E16"><formula1>{x_attr(PP)}!$F$1:$N$1</formula1></dataValidation>'
         '</dataValidations>'
+    )
+    # dropdowns that read another sheet go in the x14 extension, the way Excel itself stores them
+    ext = (
+        '<extLst><ext uri="{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">'
+        '<x14:dataValidations count="2" xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">'
+        f'<x14:dataValidation type="list" allowBlank="1" showErrorMessage="1"><x14:formula1><xm:f>{x_attr(RASIO)}!$P$1:$X$1</xm:f></x14:formula1><xm:sqref>B9:C16</xm:sqref></x14:dataValidation>'
+        f'<x14:dataValidation type="list" allowBlank="1" showErrorMessage="1"><x14:formula1><xm:f>{x_attr(PP)}!$F$1:$N$1</xm:f></x14:formula1><xm:sqref>D9:E16</xm:sqref></x14:dataValidation>'
+        '</x14:dataValidations></ext></extLst>'
     )
 
     # styles: add green / red dxfs for the Status columns
@@ -242,17 +251,17 @@ def simplify(src: Path, dst: Path) -> dict:
     sty = sty.replace(m.group(0), f'<dxfs count="{n_dxf + 2}">', 1).replace("</dxfs>", green + red + "</dxfs>", 1)
     files["xl/styles.xml"] = sty.encode()
     cf = ""
-    for rng, tl in (("T9:T24", "T9"), ("Y9:Y80", "Y9")):
+    for k, (rng, tl) in enumerate((("T9:T24", "T9"), ("Y9:Y80", "Y9"))):
         cf += (f'<conditionalFormatting sqref="{rng}">'
-               f'<cfRule type="expression" dxfId="{n_dxf}" priority="1"><formula>LEFT({tl},1)="✔"</formula></cfRule>'
-               f'<cfRule type="expression" dxfId="{n_dxf + 1}" priority="2"><formula>LEFT({tl},1)="⚠"</formula></cfRule>'
+               f'<cfRule type="expression" dxfId="{n_dxf}" priority="{2 * k + 1}"><formula>LEFT({tl},1)="✔"</formula></cfRule>'
+               f'<cfRule type="expression" dxfId="{n_dxf + 1}" priority="{2 * k + 2}"><formula>LEFT({tl},1)="⚠"</formula></cfRule>'
                f'</conditionalFormatting>')
 
     head = raw[: raw.index("<dimension")]
     views = re.search(r"<sheetViews>.*?</sheetViews>", raw, re.S).group(0)
     fmt = re.search(r"<sheetFormatPr[^>]*/>", raw).group(0)
     margins = re.search(r"<pageMargins[^>]*/>", raw).group(0)
-    new_setting = (head + '<dimension ref="A1:AJ80"/>' + views + fmt + cols + sheet_data + cf + dv + margins + "</worksheet>")
+    new_setting = (head + '<dimension ref="A1:AJ80"/>' + views + fmt + cols + sheet_data + cf + dv + margins + ext + "</worksheet>")
     files[part["Setting"]] = new_setting.encode()
 
     # ---- refinery sheets: point the tanda-1 COUNTIFS at the new list
@@ -303,10 +312,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("input", type=Path)
     ap.add_argument("output", type=Path)
+    ap.add_argument("--cib-max", type=float, help="set 'Maks volume via CIB (MB)' (Setting B5)")
     a = ap.parse_args(argv)
     if a.input.resolve() == a.output.resolve():
         sys.exit("Refusing to overwrite the input file.")
-    r = simplify(a.input, a.output)
+    r = simplify(a.input, a.output, a.cib_max)
     print(f"Wrote {a.output}")
     print(f"  Tanda-1 needs moved to one-per-row list: {len(r['needs'])}")
     for sh, (na, nb) in r["replaced"].items():
